@@ -168,7 +168,7 @@ metadata consists of $k$ two-sentence chunks of this form:
 \emph{On [Date1], [X] arrived. [Offset] days later, [Y] was born.}
 \end{quote}
 
-Each of two sentences describes an event.
+Each of the two sentences describes an event.
 The values of the four variables are randomly selected:
 [Date1] (in the format March 21, 1992), [Offset]
 (a positive integer), and
@@ -301,6 +301,7 @@ These results indicate that LLMs fail at this task.
 For RAG, we use the same setup as in the previous section,
 except that the context consists of the RAG retrieval result
 instead of the corpus. The LLM is Llama3.3-70B.
+
 \textbf{Prompt:}
 \begin{quote}
 Context: [RAG RESULT]\\
@@ -349,10 +350,10 @@ RESULT to the model where $k=5$.
 
 In addition to simple accuracy (as defined above), we also
 measure the success rate of RAG. Specifically, we measure
-(i) how often a chunk was retrieved from which the answer can be inferred
+(i) how often a chunk was retrieved from which the correct answer can be inferred
 and (ii) how often a chunk was retrieved that matches the
 query date, but does not contain (directly or indirectly)
-the answer.
+the correct answer.
 
 % \textbf{Retrieval Evaluation.} We measure two aspects of retrieval performance:
 %\begin{itemize}
@@ -376,6 +377,7 @@ Table~\ref{tab:rag-retrieval} indicates that LLMs+RAG fail at this task.
 For  propositionalizing the two-sentence chunks, we use the
 following prompt.
 
+\textbf{Prompt:}
 \begin{quote}
 Please convert the sentence in square brackets into a tuple of the form [NAME, EVENT, DATE, OFFSET]. EVENT should be just one word. DATE is the date explicitly mentioned in the text. OFFSET is the offset in days of the date of the EVENT from the DATE explicitly mentioned in the text. For the DATE use the ISO format YYYY-MM-DD. Then output the tuple in JSON format:\\
 \{ \\
@@ -407,7 +409,7 @@ The json structures are then stored in the MemLLM memory. As
 part of indexing, dates of events are computed and returned
 in ISO format, e.g., for the reference date 1992-08-01 and the offset
 7, the event date 1992-08-08 is stored.
-Entries are indexed by data of occurrence
+Entries are indexed by date of occurrence.
 This approach systematically transforms
 unstructured text into a form suitable for 
 explicit querying of metadata.
@@ -459,12 +461,14 @@ It also extracts the correct name with high accuracy (99\%).
 \subsection{MemLLM Experiment}
 %In this section, we demonstrate the pipeline for our ``MemLLM'' approach to answering questions based on a fact-oriented knowledge base (KB). Before this part, we know using Propositionalizer,  we have started all available information into facts that capture \textit{(Name, Event)} tuples, each associated with a corresponding date. These propositionalized facts are then stored in our KB and dates are stored as indexes in Memory. 
 
-Now, given a user query, we utilize a \emph{system prompt} instructing the LLM to generate a specific function call of the form:
+Given a user query, we use a {system prompt} to instruct the LLM to generate a specific function call of the form:
 \begin{center}
 \texttt{Read\_Request(\textit{QUESTION}, \textit{DATE})}
 \end{center}
-This step is guided entirely by the LLM, which also extracts the relevant \textit{DATE} from the question context. This is the exact \textbf{System Prompt}:
+This step is guided entirely by the LLM, which also extracts
+the relevant \textit{DATE} from the question context.
 
+\textbf{System Prompt}:
 \begin{quote}
 \emph{``System: Your task is to answer the QUESTION.\\
 For answering the QUESTION, you should take the following steps:\\
@@ -488,14 +492,14 @@ User:\\
 QUESTION: \{question\}''} \\
 \end{quote}
 
-Once the LLM outputs the function call, we parse it (e.g.,
+Once the LLM outputs the function call, we parse it (i.e., 
 via a simple regular expression) to retrieve
 the \texttt{Read\_Request} call along with its arguments. We
 then pass these arguments into our retriever component,
 which filters the KB to only those facts whose \textit{DATE}
 matches the one requested by the LLM. This filtering
 drastically reduces the candidate set of facts. Next, we
-employ a standard BM25-based retrieval mechanism to identify
+employ a BM25 retrieval  to identify
 the most relevant facts within this date-filtered subset of
 the KB.
 
