@@ -140,100 +140,92 @@ $>>>$\hspace{1cm}}}}}
 
 
 
-\section{Experiments}
+\section{Experiment 1}
+The problem setting we address is the that the NLU system
+(a standard LLM, an LLM with RAG, MemLLM) reads a long
+context and is then asked a question about this context. We
+evaluate each NLU system on how accurately it answers the question.
+
+
+In our first experiment, we use a synthetic dataset to show
+the benefits of explicit metadata.
+Our first question is whether a state-of-the-art large
+language model and a LLM+RAG system can perform well without explicit metadata.
+
+We then show that our proposed propositionalization pipeline
+robustly and accurately extracts explicit metadata.  Our
+main question then is whether our proposed MemLLM system is
+able to take advantage of the propositionalized explicit
+metadata.
+
 
 
 \subsection{Dataset generation}
-We developed a dataset to evaluate how well LLMs handle temporal reasoning when the query's date is not explicitly mentioned. Each instance (or “term”) follows a simple, two-sentence template describing two events separated by a number of days:
+Our synthetic dataset for evaluating the utility of explicit
+metadata consists of $k$ two-sentence chunks of this form:
 
 \begin{quote}
-\emph{On [Date1], [X] arrived. [Offset] days later,[Y] was born.}
+\emph{On [Date1], [X] arrived. [Offset] days later, [Y] was born.}
 \end{quote}
 
-Here, \texttt{[Date1]} is given in the format \textit{Month Day, Year} (e.g., \texttt{March 21, 1992}), while \texttt{[X]} and \texttt{[Y]} are randomly selected names. The integer \texttt{[Offset]} represents how many days after \texttt{[Date1]} the second event occurs. We then pose the question:
+Each of two sentences describes an event.
+The values of the four variables are randomly selected:
+[Date1] (in the format March 21, 1992), [Offset]
+(a positive integer), and
+\texttt{[X]} and \texttt{[Y]} (names).
 
+For each chunk, we formulate a question:
 \begin{quote}
 \emph{Who was born on [Date2]?}
 \end{quote}
+where \texttt{[Date2]} is \texttt{[Date1]}
+plus \texttt{[Offset]} days, expressed in ISO format
+(\texttt{YYYY-MM-DD}).
 
-Where \texttt{[Date2]} is \texttt{[Date1]} plus \texttt{[Offset]} days, expressed in ISO format (\texttt{YYYY-MM-DD}). This forces the model to compute \texttt{[Date2]} rather than simply retrieving it. To analyze performance under varying context lengths, we concatenate multiple terms into a single input, systematically changing the number of terms to investigate how context window size affects temporal reasoning. To have more generalized results, we synthesized the dataset in 3 different ranges of offsets, 1 to 7 days, 7 to 30 days, and 100 to 200 days.
+This setup tests the ability of an approach to deal with
+complex questions that cannot simply be solved by direct
+match.
 
-\subsection{Propositionalizer Experiment}
-In this step, we employ a Propositionalizer that leverages an LLM prompt to convert each term into a structured representation, extracting four attributes: "name", "event", "date", and "offset". This approach allows the model to provide the relative occurrence of an event without calculating the exact date in one step. Specifically:
-\begin{itemize}
-    \item \textbf{Name:} The person’s name.
-    \item \textbf{Event:} A one-word descriptor of what happened.
-    \item \textbf{Date:} A pivot date explicitly mentioned in the text, in ISO format (YYYY-MM-DD).
-    \item \textbf{Offset:} The number of days from the pivot date to when the event occurred (i.e., actual occurrence date = date + offset).
-\end{itemize}
-As experiments indicated that asking the LLM to determine the exact event date in a single step reduced accuracy, this method extracts the relative offset from a known date instead, allowing the model to provide more reliable information (We can elaborate it more in the appendix).
+We create three versions of the  dataset, each consisting of
+$k$ two-sentence chunks, for three
+different ranges of [Offset]: [1,7], [7,30] and [100,200].
 
-The prompt used is as follows:
+\enote{hs}{this also should mention how the corresponding
+evaluation datasets are produced}
+
+\subsection{LLM}
+We first test the performance of two instruction-tuned LLMs on the task:
+Llama-3.3-70B-Instruct and GPT4-o. We conduct experiments
+for all three offset ranges: [1,7], [7,30] and [100,200]. We
+also experiment with only presenting prefixes of
+20, 50, 100 and 500 chunks as context to the model (as opposed to
+the entire corpus of $k$ chunks) to 
+assess the effect of context length.
+
+
+%To examine how well LLMs handle extensive contexts, we first concatenated a fixed number of terms into a single prompt before posing a question (For example 500 terms). We evaluated two instruction-tuned models, \emph{Llama3.3-70B} (\texttt{meta-llama/Llama-3.3-70B-Instruct}) and \emph{GPT4-o}. 
+
+%\textbf{Prompt Used (shown here in brief, with the full text placed in a figure):}
+%\begin{quote}
+%\emph{``Your task is to answer the Question, based on the Context.\\
+%Context: \{context\}\\
+%Question:  \{question\}\\
+%%%%%%Just say your answer's name and the last name. If your answer contains more than one person, just name one of them in the following format:\\
+%Name Last\_Name\\
+%Answer: ``}
+%\end{quote}
+
+\enote{hs}{i put the actual prompt in comments. is there a
+good reason why we could not use a more natural prompt as
+suggested below?}
+
+\textbf{Prompt:}
 \begin{quote}
-\emph{``Please convert the sentence in square brackets into a tuple of the form [NAME, EVENT, DATE, OFFSET]. EVENT should be just one word. DATE is the date explicitly mentioned in the text. OFFSET is the offset in days of the date of the EVENT from the DATE explicitly mentioned in the text. For the DATE use the ISO format YYYY-MM-DD. Then output the tuple in JSON format:\\
-\{ \\
-"name": NAME, \\
-"event": EVENT, \\
-"date": DATE, \\
-"offset": OFFSET \\
-\} \\
-For example, if the INPUT is:\\
-John died on August 1, 1992. [One week later Peter was born.]\\
-Then you have to OUTPUT:\\
-\{ \\
-"name": "Peter", \\
-"event": "birth", \\
-"date": "1992-08-01", \\
-"offset": 7 \\
-\} \\
-Here is the INPUT that you need to convert as described: \\
-INPUT: \{context\} \\
-OUTPUT:}\\
+Context: [CORPUS]\\
+Question:  Who was born on [Date2]? If there are several
+people, just name one of them.
 \end{quote}
-
-Using this prompt, the model processes each term to produce a JSON object containing the four required attributes. Each list of tuples of [name, event] is then added to our knowledge base, where entries are indexed by date of occurrence date (occurrence\_date = date + offset) that is stored as metadata in memory to facilitate efficient retrieval. This approach systematically transforms unstructured text into a form suitable for downstream reasoning and querying. 
-
-As you can see in Table~\ref{tab:propositionalizer}, the Propositionalizer was able to extract the occurrence date with 100\% accuracy across all tested offsets (1–7 days, 7–30 days, and 100–200 days). Additionally, more than 99\% of the time, it successfully extracted the correct name from the term, resulting in over 99\% accuracy in extracting the correct proposition from the text.
-
-\begin{table}[ht]
-\centering
-\caption{Detailed Performance of the Propositionalizer.}
-\label{tab:propositionalizer}
-\begin{tabular}{l|ccc}
-\hline
-\textbf{Propositionalizer} & \multicolumn{3}{c}{\small{\textbf{Acc. of Offset Length (Days)}}} \\
-\cline{2-4}
-\small{\textbf{Extraction Accuracy}}  & \textbf{1--7 }  & \textbf{7--30 } & \textbf{100--200 } \\
-\hline
-\textbf{Pivotal Date} & 100 & 100 & 100 \\
-\textbf{Offset} & 100 & 100 & 100 \\
-\textbf{Occurrence Date} & 100 & 100 & 100 \\
-\textbf{Name} & 99.97 & 99.99 & 99.96 \\
-\textbf{Date and Name} & 99.97 & 99.99 & 99.96 \\
-\hline
-\end{tabular}
-\end{table}
-
-\subsection{LLM Long-Context Experiment}
-
-To examine how well LLMs handle extensive contexts, we first concatenated a fixed number of terms into a single prompt before posing a question (For example 500 terms). We evaluated two instruction-tuned models, \emph{Llama3.3-70B} (\texttt{meta-llama/Llama-3.3-70B-Instruct}) and \emph{GPT4-o}. 
-
-\noindent\textbf{Prompt Used (shown here in brief, with the full text placed in a figure):}
-\begin{quote}
-\emph{``Your task is to answer the Question, based on the Context.\\
-Context: \{context\}\\
-Question:  \{question\}\\
-Just say your answer's name and the last name. If your answer contains more than one person, just name one of them in the following format:\\
-Name Last\_Name\\
-Answer: ``}
-\end{quote}
-
-We then evaluated each model’s response by checking whether the returned name corresponds to an individual whose birth date matches the date mentioned in the query. As shown in Table~\ref{tab:results-long-context}, the baseline \emph{Llama3.3-70B} model achieved \textbf{0.92\%} accuracy for 100 to 200 days offset range, while \emph{GPT4-o} scored \textbf{4\%}. Notably, adding retrieval-augmented generation (\emph{Llama3.3-70B + RAG}) resulted in a slight improvement for the same dataset but remained low at \textbf{0.64\%}. These results suggest that even with a shorter context, models struggle to accurately handle temporal reasoning across numerous terms.
-
-
-\noindent
-\textbf{Context Length and Event Offset Study.}
-To further isolate whether the large prompt context alone causes these performance issues (rather than potential mathematical or reasoning weaknesses), we reduced the number of input terms to \{500, 100, 50, 20\} and measured accuracy changes. In addition, we varied the event \emph{offset length} (e.g., the difference between relevant dates) from a longer range of \{100--200 days\} down to a much shorter interval of \{1--7 days\}. We hypothesized that reducing context size and narrowing event offsets might improve accuracy by simplifying the retrieval and disambiguation tasks, however, the big gap still presents there. The results for each combination of input terms and offset length are summarized in Table~\ref{tab:results-long-context} (values to be filled in).
+where [Date2] is given in ISO format.
 
 \begin{table}[ht]
 \centering
@@ -257,20 +249,83 @@ GPT-4o   & 100 & 36 & 12 & 2 \\
 \end{tabular}
 \end{table}
 
-These additional experiments help illuminate whether retrieval or fundamental reasoning limitations are primarily responsible for the low accuracy in long-context scenarios.
+The evaluation consists of
+checking whether the answer contains a correct name and no
+incorrect name.
+As shown in
+Table~\ref{tab:results-long-context},
+for offsets in [100,200], 
+Llama3.3-70B's accuracy is 0.92\% and
+GPT4-o's 4\%.
+
+These results indicate that LLMs fail at this task.
+
+
+
+%To further isolate whether the large prompt context alone
+%causes these performance issues (rather than potential
+%mathematical or reasoning weaknesses), we reduced the number
+%of input terms to \{500, 100, 50, 20\} and measured accuracy
+%changes. In addition, we varied the event \emph{offset
+%length} (e.g., the difference between relevant dates) from a
+%longer range of \{100--200 days\} down to a much shorter
+%interval of \{1--7 days\}. We hypothesized that reducing
+%context size and narrowing event offsets might improve
+%accuracy by simplifying the retrieval and disambiguation
+%tasks, however, the big gap still presents there. The
+%results for each combination of input terms and offset
+%length are summarized in
+%Table~\ref{tab:results-long-context} (values to be filled
+%in).
+
+
+%These additional experiments help illuminate whether retrieval or fundamental reasoning limitations are primarily responsible for the low accuracy in long-context scenarios.
+
+
+%This forces the model to
+%compute \texttt{[Date2]} rather than simply retrieving
+%it. To analyze performance under varying context lengths, we
+%concatenate multiple terms into a single input,
+%systematically changing the number of terms to investigate
+
+%}. Notably, adding
+%retrieval-augmented generation (\emph{Llama3.3-70B + RAG})
+%resulted in a slight improvement for the same dataset but
+%remained low at \textbf{0.64\%}. These results suggest that
+%even with a shorter context, models struggle to accurately
+%handle temporal reasoning across numerous terms.
 
 
 \subsection{RAG Experiment}
-Retrieval-augmented generation (RAG) is often cited as a means to address temporal reasoning issues in Large Language Models. We implement a RAG pipeline that uses \textbf{BM25} as the retrieval engine and \textbf{two-sentence chunks} (or “terms”) as the basic unit of indexing. The corpus is first segmented into these terms, which are then tokenized and indexed by BM25. At query time, the question (e.g., \emph{``Who was born on [Date]?''}) is also tokenized, and BM25 retrieves the top-$K$ (here, $K=5$) relevant terms. Rather than supplying the entire corpus to the model, only these top-$K$ terms are concatenated and passed to the LLM for answer generation. We use the same prompt format as in the Long-Context experiment, with the key difference that here the \emph{context} is limited to the retrieved terms.
 
-\vspace{0.5em}
-\noindent \textbf{Retrieval Evaluation.} We measure two aspects of retrieval performance:
-\begin{itemize}
-    \item \textit{Gold Term Retrieval Accuracy:} When a question asks \emph{``Who was born on [Date\_1]?''}, the “gold” term is the one that explicitly states \emph{``On [Date\_2], [Y] arrived, [Offset] days later, [X] was born''}, where the date [Offset] days after [Date\_2] matches \([Date\_1]\). In our experiments, only \textbf{1.5\%}, \textbf{27.22\%}, and \textbf{10.56\%} of retrieved terms contained this exact “gold” phrase for the range offsets of 1 to 7, 7 to 30, and 100 to 200 days.
-    \item \textit{Date Appearance in Terms:} A retrieved term may contain the queried date but not indicate a birth event. For instance, \emph{``On [Date\_1], [Y] arrived, [Offset] days later [W] was born.''} references the questioned date([Date\_1]) and the birth event, but not the correct birth event for the question. Table~\ref{tab:rag-retrieval} details the portion of queries for which such partial matches were retrieved.
-\end{itemize}
+For RAG, we use the same setup as in the previous section,
+except that the context consists of the RAG retrieval result
+instead of the corpus. The LLM is Llama3.3-70B.
+\textbf{Prompt:}
+\begin{quote}
+Context: [RAG RESULT]\\
+Question:  Who was born on [Date2]? If there are several
+people, just name one of them.
+\end{quote}
+where [Date2] is given in ISO format.
 
-\noindent \textbf{Answer Generation.} After retrieval, we pass the top-$K$ chunks to \emph{Llama3.3-70B} (\texttt{meta-llama/Llama-3.3-70B-Instruct}) for final answer generation. Despite retrieving a small set of ostensibly relevant terms, the model’s overall accuracy remained low at \textbf{0.64\%}, underscoring the difficulty of leveraging RAG for precise temporal inference.
+\enote{hs}{please say which RAG implementation you are using}
+
+The unit of indexing for RAG is the
+two-sentence chunk.
+BM25 is the
+similarity measure. The query is ``Who was born on
+[Date2]''. We retrieve the top $k$ retrieval results as RAG
+RESULT to the model where $k=5$.
+
+%At query time, the question (e.g., \emph{``Who was
+%born on [Date]?''}) is also tokenized, and BM25 retrieves
+%the top-$K$ (here, $K=5$) relevant terms. Rather than
+%supplying the entire corpus to the model, only these top-$K$
+%terms are concatenated and passed to the LLM for answer
+%generation. We use the same prompt format as in the
+%Long-Context experiment, with the key difference that here
+%the \emph{context} is limited to the retrieved terms.
 
 \begin{table}[ht]
 \centering
@@ -292,8 +347,117 @@ Retrieval-augmented generation (RAG) is often cited as a means to address tempor
 \end{tabular}
 \end{table}
 
+In addition to simple accuracy (as defined above), we also
+measure the success rate of RAG. Specifically, we measure
+(i) how often a chunk was retrieved from which the answer can be inferred
+and (ii) how often a chunk was retrieved that matches the
+query date, but does not contain (directly or indirectly)
+the answer.
+
+% \textbf{Retrieval Evaluation.} We measure two aspects of retrieval performance:
+%\begin{itemize}
+%    \item \textit{Gold Term Retrieval Accuracy:} When a question asks \emph{``Who was born on [Date\_1]?''}, the “gold” term is the one that explicitly states \emph{``On [Date\_2], [Y] arrived, [Offset] days later, [X] was born''}, where the date [Offset] days after [Date\_2] matches \([Date\_1]\). In our experiments, only \textbf{1.5\%}, \textbf{27.22\%}, and \textbf{10.56\%} of retrieved terms contained this exact “gold” phrase for the range offsets of 1 to 7, 7 to 30, and 100 to 200 days.
+%    \item \textit{Date Appearance in Terms:} A retrieved term may contain the queried date but not indicate a birth event. For instance, \emph{``On [Date\_1], [Y] arrived, [Offset] days later [W] was born.''} references the questioned date([Date\_1]) and the birth event, but not the correct birth event for the question. Table~\ref{tab:rag-retrieval} details the portion of queries for which such partial matches were retrieved.
+%\end{itemize}
+
+Table~\ref{tab:rag-retrieval} indicates that LLMs+RAG fail at this task.
+
+
+%\textbf{Answer Generation.} After retrieval, we pass the
+%top-$K$ chunks to \emph{Llama3.3-70B}
+%(\texttt{meta-llama/Llama-3.3-70B-Instruct}) for final
+%answer generation. Despite retrieving a small set of
+%ostensibly relevant terms,
+%%the model’s overall accuracy remained low at \textbf{0.64\%}, underscoring the difficulty of leveraging RAG for precise temporal inference.
+
+
+
+\subsection{Propositionalizer}
+For  propositionalizing the two-sentence chunks, we use the
+following prompt.
+
+\begin{quote}
+Please convert the sentence in square brackets into a tuple of the form [NAME, EVENT, DATE, OFFSET]. EVENT should be just one word. DATE is the date explicitly mentioned in the text. OFFSET is the offset in days of the date of the EVENT from the DATE explicitly mentioned in the text. For the DATE use the ISO format YYYY-MM-DD. Then output the tuple in JSON format:\\
+\{ \\
+"name": NAME, \\
+"event": EVENT, \\
+"date": DATE, \\
+"offset": OFFSET \\
+\} \\
+For example, if the INPUT is:\\
+John died on August 1, 1992. [One week later Peter was born.]\\
+Then you have to OUTPUT:\\
+\{ \\
+"name": "Peter", \\
+"event": "birth", \\
+"date": "1992-08-01", \\
+"offset": 7 \\
+\} \\
+Here is the INPUT that you need to convert as described: \\
+INPUT: \{context\} \\
+OUTPUT:
+\end{quote}
+
+This prompt 
+converts each chunk into a structured
+representation consisting of the four attributes: "name", "event",
+"date", and "offset".
+
+The json structures are then stored in the MemLLM memory. As
+part of indexing, dates of events are computed and returned
+in ISO format, e.g., for the reference date 1992-08-01 and the offset
+7, the event date 1992-08-08 is stored.
+Entries are indexed by data of occurrence
+This approach systematically transforms
+unstructured text into a form suitable for 
+explicit querying of metadata.
+
+%This approach allows the model to
+%provide the relative occurrence of an event without
+%calculating the exact date in one step. Specifically:
+
+%\begin{itemize}
+%    \item \textbf{Name:} The person’s name.
+%    \item \textbf{Event:} A one-word descriptor of what happened.
+%    \item \textbf{Date:} A pivot date explicitly mentioned in the text, in ISO format (YYYY-MM-DD).
+%%%    \item \textbf{Offset:} The number of days from the pivot date to when the event occurred (i.e., actual occurrence date = date + offset).
+%\end{itemize}
+%%%As experiments indicated that asking the LLM to determine the exact event date in a single step reduced accuracy, this method extracts the relative offset from a known date instead, allowing the model to provide more reliable information (We can elaborate it more in the appendix).
+
+
+
+
+
+
+\begin{table}[ht]
+\centering
+\caption{Detailed Performance of the Propositionalizer.}
+\label{tab:propositionalizer}
+\begin{tabular}{l|ccc}
+\hline
+\textbf{Propositionalizer} & \multicolumn{3}{c}{\small{\textbf{Acc. of Offset Length (Days)}}} \\
+\cline{2-4}
+\small{\textbf{Extraction Accuracy}}  & \textbf{1--7 }  & \textbf{7--30 } & \textbf{100--200 } \\
+\hline
+\textbf{Pivotal Date} & 100 & 100 & 100 \\
+\textbf{Offset} & 100 & 100 & 100 \\
+\textbf{Occurrence Date} & 100 & 100 & 100 \\
+\textbf{Name} & 99.97 & 99.99 & 99.96 \\
+\textbf{Date and Name} & 99.97 & 99.99 & 99.96 \\
+\hline
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:propositionalizer} shows that
+Propositionalizer extracts the occurrence date
+with 100\% accuracy across all tested offsets (1–7 days,
+7–30 days, and 100–200 days). 
+It also extracts the correct name with high accuracy (99\%).
+
+
+
 \subsection{MemLLM Experiment}
-In this section, we demonstrate the pipeline for our ``MemLLM'' approach to answering questions based on a fact-oriented knowledge base (KB). Before this part, we know using Propositionalizer,  we have started all available information into facts that capture \textit{(Name, Event)} tuples, each associated with a corresponding date. These propositionalized facts are then stored in our KB and dates are stored as indexes in Memory. 
+%In this section, we demonstrate the pipeline for our ``MemLLM'' approach to answering questions based on a fact-oriented knowledge base (KB). Before this part, we know using Propositionalizer,  we have started all available information into facts that capture \textit{(Name, Event)} tuples, each associated with a corresponding date. These propositionalized facts are then stored in our KB and dates are stored as indexes in Memory. 
 
 Now, given a user query, we utilize a \emph{system prompt} instructing the LLM to generate a specific function call of the form:
 \begin{center}
@@ -309,7 +473,14 @@ For answering the QUESTION, you should take the following steps:\\
 The DATE should be in the ISO format of ``YYYY-MM-DD''.\\
 For example:\\
 \texttt{Read\_Request("what happened on 1998-07-05?", "1998-07-05")}\\
-2 - Answer the question after you receive the Retrievers\_Results: while you see the Propositionalizer\_Results in your inputs, answer the question. Just say your answer's name and the last name. If your answer contains more than one person, just name one of them in the following format:\\
+%2 - Answer the question after you receive the Retrievers\_Results: while you see the Propositionalizer\_Results in your inputs, answer the question. Just say your answer's name and the last name. If your answer contains more than one person, just name one of them in the following format:\\
+2 - Answer the question after you receive the SEARCH RESULT.
+%Retrievers\_Results: while you see the
+%Propositionalizer\_Results in your inputs, answer the
+%question. Just say your answer's name and the last name.
+If there is more than one correct answer, 
+just give one of
+them in the following format:\\
 \texttt{Name Last\_Name}\\
 For example:\\
 \texttt{Lea Brida}\\
@@ -317,12 +488,35 @@ User:\\
 QUESTION: \{question\}''} \\
 \end{quote}
 
-Once the LLM outputs the function call, we parse it (e.g., via a simple regular expression) to retrieve the \texttt{Read\_Request} call along with its arguments. We then pass these arguments into our retriever component, which filters the KB to only those facts whose \textit{DATE} matches the one requested by the LLM. This filtering drastically reduces the candidate set of facts. Next, we employ a standard BM25-based retrieval mechanism to identify the most relevant facts within this date-filtered subset of the KB.
+Once the LLM outputs the function call, we parse it (e.g.,
+via a simple regular expression) to retrieve
+the \texttt{Read\_Request} call along with its arguments. We
+then pass these arguments into our retriever component,
+which filters the KB to only those facts whose \textit{DATE}
+matches the one requested by the LLM. This filtering
+drastically reduces the candidate set of facts. Next, we
+employ a standard BM25-based retrieval mechanism to identify
+the most relevant facts within this date-filtered subset of
+the KB.
 
-Finally, once the relevant facts (i.e., the top-ranked set of date-matched facts) have been retrieved, they can be passed on to the LLM to generate a coherent response. Using a specialized prompt (e.g., LLM-Long context or RAG-style system), we provide the date-filtered, retrieved facts as a separate context (rather than appending them to the original prompt). The LLM is then explicitly instructed to answer the user’s query using these retrieved facts. Empirically, this approach achieves an accuracy of $99.53\%$, $99.50\%$, and $99.45\%$ for the offset range of 1 to 7 days, 7 to 30, and 100 to 200 days respectively.
+Finally, once the relevant facts (i.e., the top-ranked set
+of date-matched facts) have been retrieved, they can be
+passed on to the LLM to generate a coherent response. Using
+a specialized prompt (e.g., LLM-Long context or RAG-style
+system), we provide the date-filtered, retrieved facts as a
+separate context (rather than appending them to the original
+prompt). The LLM is then explicitly instructed to answer the
+user’s query using these retrieved facts. Empirically, this
+approach achieves an accuracy of $99.53\%$, $99.50\%$, and
+$99.45\%$ for the offset range of 1 to 7 days, 7 to 30, and
+100 to 200 days respectively.
 
 
-By confining retrieval to date-matched facts prior to BM25-based ranking, our system ensures both efficiency and accuracy in leveraging the stored knowledge. A summary of the performance of each step of out pipeline can be found in Table~\ref{tab:memllm}.
+By confining retrieval to date-matched facts prior to
+BM25-based ranking, our system ensures both efficiency and
+accuracy in leveraging the stored knowledge. A summary of
+the performance of each step of out pipeline can be found in
+Table~\ref{tab:memllm}.
 
 
 
@@ -343,6 +537,14 @@ QA Accuracy  & 99.53 & 99.5 & 99.45 \\
 \hline
 \end{tabular}
 \end{table}
+
+
+\section{Good stuff to put in the other sections}
+
+
+Retrieval-augmented generation (RAG) is often cited as a
+means to address temporal reasoning issues in Large Language
+Models. 
 
 \cite{Aho:72}
 \bibliography{custom}
